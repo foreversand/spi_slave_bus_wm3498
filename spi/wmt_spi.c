@@ -45,8 +45,6 @@
 #define spi_trace()
 #endif
 
-
-
 static unsigned int pllb_input_freq = 83333;
 static bool g_use_ss1 = false;
 static bool g_use_ss2 = false;
@@ -489,12 +487,9 @@ static int wmt_spi_regs_config(struct spi_device *spi_dev)
 	spi_set_clock_mode(wmt_spi, clk_mode);
 	/* 3. spi as master                         */
 	spi_as_master(wmt_spi, 1);
-
     //sand
     //spi_setbit(wmt_spi, SPI_CR, BIT1);
     spi_setbit(wmt_spi, SPI_DFCR, BIT31 | BIT29);
-    
-	
 	/* 4. slave selection                       */
 	/*
 	spi_setbit(wmt_spi, SPI_CR, spi_dev->chip_select << SPI_CR_SS_SHIFT);
@@ -579,7 +574,6 @@ wmt_spi_write_read(struct spi_device *spi, struct spi_transfer *t)
 		if (spi_tx_is_finish(wmt_spi))
 			goto out;
 		/* data send has finished */
-		//sand
         //dev_info(&spi->dev, "(i)%x %x %x", spi_get_reg32(wmt_spi, 0), spi_get_reg32(wmt_spi, 4), spi_get_reg32(wmt_spi, 8));
 		spi_disable(wmt_spi);
 		//dev_info(&spi->dev, "(i)%x %x %x", spi_get_reg32(wmt_spi, 0), spi_get_reg32(wmt_spi, 4), spi_get_reg32(wmt_spi, 8));
@@ -594,7 +588,6 @@ wmt_spi_write_read(struct spi_device *spi, struct spi_transfer *t)
 	        }
 		}
 		/* check if rx finish */
-		
 		if (spi_rx_is_finish(wmt_spi))
 			goto out;
 		if (tx)
@@ -1146,7 +1139,6 @@ static int __devinit wmt_spi_probe(struct platform_device *pdev)
 	wmt_spi->master = spi_master_get(master);
 	wmt_spi->pdev = pdev;
 	wmt_dev_info = spi_get_hw_info(pdev);
-	//sand
 	wmt_spi->spi_hw_info = kmalloc(sizeof(struct wmt_spi_hw), GFP_KERNEL);
 	if (!wmt_spi->spi_hw_info) {
 		dev_err(dev, "SPI allocating hardware info memory failed\n");

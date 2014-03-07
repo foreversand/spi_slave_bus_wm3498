@@ -28,6 +28,7 @@
 #include <linux/platform_device.h>
 
 #include <mach/hardware.h>
+#include <mach/wmt_secure.h>
 #include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/mach/map.h>
@@ -311,14 +312,7 @@ static struct platform_device wmt_pcm_device = {
 };
 */
 static struct wmt_spi_slave spidev_slave_info = {
-	.dma_en = 1,
-	.max_transfer_length = SPI_MAX_TRANSFER_LENGTH,
-	.ssn_ctrl          = SSN_CTRL_HARDWARE,
-	.bits_per_word = 8,
-};
-
-static struct wmt_spi_slave spidev1_slave_info = {
-	.dma_en = 1,
+	.dma_en = 0,
 	.max_transfer_length = SPI_MAX_TRANSFER_LENGTH,
 	.ssn_ctrl          = SSN_CTRL_HARDWARE,
 	.bits_per_word = 8,
@@ -340,16 +334,6 @@ static struct spi_board_info wmt_spi_board_info[] = {
 
 #ifdef CONFIG_WMT_NEWSPI1_SUPPORT
 static struct spi_board_info wmt_spi1_board_info[] = {
-//        {
-//    .modalias           = "spidev",
-//    .platform_data      = NULL, 
-//    .controller_data    = &spidev1_slave_info,   /* spidev config info */
-//    .irq                = IRQ_SPI1,              /* actually no need   */
-//    .max_speed_hz       = SPI_MAX_FREQ_HZ,      /* same as spi master */ 
-//    .bus_num            = 1,                    /* use spi master 0   */
-//    .mode               = SPI_CLK_MODE3,        /* phase1, polarity1  */ 
-//    .chip_select        = 0,
-//    },
 };
 #endif
 
@@ -462,6 +446,19 @@ static struct platform_device wmt_mali_drm_device = {
 
 #ifdef CONFIG_CACHE_L2X0
 extern int wmt_getsyspara(char *varname, unsigned char *varval, int *varlen);
+static	void __iomem *l2x0_base;
+static DEFINE_RAW_SPINLOCK(l2x0_lock);
+
+static void wmt_l2x0_disable(void)
+{
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&l2x0_lock, flags);
+//	__l2x0_flush_all();
+	wmt_smc(WMT_SMC_CMD_PL310CTRL, 0);
+	dsb();
+	raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+}
 #endif
 
 static struct platform_device *wmt_devices[] __initdata = {
@@ -494,6 +491,18 @@ static struct platform_device *wmt_devices[] __initdata = {
 #endif
 };
 
+static char ns_printk_buf[1024];
+void sprintk(unsigned int buf, unsigned int len)
+{
+	local_irq_disable();
+        printk(ns_printk_buf);
+	wmt_smc(WMT_SMC_CMD_PRINTK_RET, 0);
+}
+void notify_log_buf()
+{
+	wmt_smc(WMT_SMC_CMD_LOGBUFOK, (unsigned int)sprintk);
+	wmt_smc(WMT_SMC_CMD_LOGBUF_ADDR, (unsigned int)virt_to_phys(ns_printk_buf));
+}
 static void wmt_default_idle(void)
 {
 	if (!need_resched()) {
@@ -502,6 +511,7 @@ static void wmt_default_idle(void)
 	}
 	local_irq_enable();
 }
+
 static int __init wmt_init(void)
 {
 	/* Add for enable user access to pmu */
@@ -511,14 +521,15 @@ static int __init wmt_init(void)
 	/* Add End */
 
 #ifdef CONFIG_CACHE_L2X0
-	void __iomem *l2x0_base;
-	__u32 power_cntrl = 0;
+	__u32 power_ctrl = 0;
 	unsigned int onoff = 0;
 	unsigned int aux = 0x3E440000;
 	unsigned int prefetch_ctrl = 0x70000007;
 	unsigned int en_static_address_filtering = 0;
 	unsigned int address_filtering_start = 0xD8000000;
 	unsigned int address_filtering_end = 0xD9000000;
+	unsigned int cpu_trustzone_enabled = 0;
+	unsigned long flags;
 #endif
 
 	pm_power_off = wmt_power_off;
@@ -536,24 +547,60 @@ static int __init wmt_init(void)
 	if (wmt_getsyspara("wmt.l2c.param",buf,&varlen) == 0)
 		sscanf(buf,"%d:%x:%x:%d:%x:%x",&onoff, &aux, &prefetch_ctrl, &en_static_address_filtering, &address_filtering_start, &address_filtering_end);
 
+	if (wmt_getsyspara("wmt.secure.param",buf,&varlen) == 0)
+		sscanf(buf,"%d",&cpu_trustzone_enabled);
+	if(cpu_trustzone_enabled != 1)
+		cpu_trustzone_enabled = 0;
+
 	if (onoff == 1) {
 		l2x0_base = ioremap(0xD9000000, SZ_4K);
 
-		if (en_static_address_filtering == 1) {
-			writel_relaxed(address_filtering_end, l2x0_base + 0xC04);
-			writel_relaxed((address_filtering_start | 0x01), l2x0_base + 0xC00);
+
+		if(cpu_trustzone_enabled == 0)
+		{
+			if (en_static_address_filtering == 1) {
+				writel_relaxed(address_filtering_end, l2x0_base + 0xC04);
+				writel_relaxed((address_filtering_start | 0x01), l2x0_base + 0xC00);
+			}
+			
+			writel_relaxed(0x110, l2x0_base + L2X0_TAG_LATENCY_CTRL);
+			writel_relaxed(0x110, l2x0_base + L2X0_DATA_LATENCY_CTRL);
+	
+			power_ctrl = readl_relaxed(l2x0_base + L2X0_POWER_CTRL) | L2X0_DYNAMIC_CLK_GATING_EN | L2X0_STNDBY_MODE_EN;
+			writel_relaxed(power_ctrl, l2x0_base + L2X0_POWER_CTRL);        
+	
+			writel_relaxed(prefetch_ctrl, l2x0_base + L2X0_PREFETCH_CTRL);         
 		}
-		
-		writel_relaxed(0x110, l2x0_base + L2X0_TAG_LATENCY_CTRL);
-		writel_relaxed(0x110, l2x0_base + L2X0_DATA_LATENCY_CTRL);
+		else
+		{
+			if (en_static_address_filtering == 1) {
+				wmt_smc(WMT_SMC_CMD_PL310FILTER_END, address_filtering_end);
+				wmt_smc(WMT_SMC_CMD_PL310FILTER_START, (address_filtering_start | 0x01));
+			}
 
-		power_cntrl = readl_relaxed(l2x0_base + L2X0_POWER_CTRL) | L2X0_DYNAMIC_CLK_GATING_EN | L2X0_STNDBY_MODE_EN;
-		writel_relaxed(power_cntrl, l2x0_base + L2X0_POWER_CTRL);        
+			wmt_smc(WMT_SMC_CMD_PL310TAG_LATENCY, 0x110);
+			wmt_smc(WMT_SMC_CMD_PL310DATA_LATENCY, 0x110);
+			power_ctrl = readl_relaxed(l2x0_base + L2X0_POWER_CTRL) | L2X0_DYNAMIC_CLK_GATING_EN | L2X0_STNDBY_MODE_EN;
+			wmt_smc(WMT_SMC_CMD_PL310POWER, power_ctrl);
 
-		writel_relaxed(prefetch_ctrl, l2x0_base + L2X0_PREFETCH_CTRL);                
+			wmt_smc(WMT_SMC_CMD_PL310PREFETCH, prefetch_ctrl);
 
-		/* 256KB (32KB/way) 8-way associativity */
+			raw_spin_lock_irqsave(&l2x0_lock, flags);
+			writel_relaxed(0xffff, l2x0_base + L2X0_INV_WAY);
+			while ( readl_relaxed(l2x0_base + L2X0_INV_WAY)  & 0xffff)
+				cpu_relax();
+			writel_relaxed(0, l2x0_base + L2X0_CACHE_SYNC);
+			raw_spin_unlock_irqrestore(&l2x0_lock, flags);
+			
+			/* enable L2X0 */
+			wmt_smc(WMT_SMC_CMD_PL310CTRL, 1);
+		}
+
+		/* 512KB (32KB/way) 16-way associativity */
 		l2x0_init(l2x0_base, aux, 0);
+		
+		if(cpu_trustzone_enabled != 0)
+			outer_cache.disable = wmt_l2x0_disable;
 	}
 #endif
 
@@ -567,6 +614,8 @@ static int __init wmt_init(void)
 #endif
 /* Add End */
 
+	if(cpu_trustzone_enabled == 1)
+		notify_log_buf();//Lch for SecureOS_printk
 	return platform_add_devices(wmt_devices, ARRAY_SIZE(wmt_devices));
 }
 

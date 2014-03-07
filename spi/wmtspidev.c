@@ -433,28 +433,28 @@ static inline void wmt_spi1_setup(struct wmtspidev_data *spi)
 	slave_info = spi->spi->controller_data;
 	
     /* clear spi control register               */
-	spi_set_reg32(spi, SPI_CR, 0x800000UL);
+	spi_set_reg32(spi, SPI_CR, 0x400000UL);
 	/* clear spi status register                */
 	spi_set_reg32(spi, SPI_SR, 0x7F10);
 	spi_set_reg32(spi, SPI_DFCR, BIT4|BIT5|BIT2);
 	/* spi cre register */
-	spi_set_reg32(spi, SPI_CRE, 0x20);
+	//spi_set_reg32(spi, SPI_CRE, 0x20);
 
 	/* reset tx and rx fifo                     */
 	spi_reset_fifo(spi);
 
-    spi_set_clock_mode(spi, clockmode);
+    //spi_set_clock_mode(spi, clockmode);
 
 	
 	spi_as_slave(spi);	
-    if (SSN_CTRL_PROGRAM == slave_info->ssn_ctrl) {
-		if ((clockmode & SPI_CR_CPHS_MASK) == 0) {
-			dev_warn(&spi->spi->dev, "SSN_ctrl conflict with clock mode\n");
+    //if (SSN_CTRL_PROGRAM == slave_info->ssn_ctrl) {
+	//	if ((clockmode & SPI_CR_CPHS_MASK) == 0) {
+	//		dev_warn(&spi->spi->dev, "SSN_ctrl conflict with clock mode\n");
 			/* do not abort now, the conflict is not a serious problem, 
 			   driver can handle this well, so we work on */
-		}
-		spi_setbit(spi, SPI_DFCR, SPI_DFCR_SC_MASK);
-	}	
+	//	}
+	//	spi_setbit(spi, SPI_DFCR, SPI_DFCR_SC_MASK);
+	//}	
 }
 
 
@@ -481,7 +481,8 @@ static int wmt_spidev_dma_init(struct wmtspidev_data *spi)
 	spi->wmtspidev_dma_info->rx_config.ChunkSize     = SPI_DMA_CHUNK_SIZE;
 	spi->wmtspidev_dma_info->rx_config.DefaultCCR    = SPI_RX_DMA_CFG;
 	spi->wmtspidev_dma_info->rx_config.DeviceReqType = SPI1_DMA_RX_REQ;
-	spi->wmtspidev_dma_info->rx_config.MIF1addr      = SPI1_BASE_ADDR + SPI_RXFIFO;
+	spi->wmtspidev_dma_info->rx_config.MIF1addr      = 0xD8250000 + SPI_RXFIFO;
+	//dev_info(&spi->spi->dev, "MIF1 addr %x", spi->wmtspidev_dma_info->rx_config.MIF1addr);
 	spi->wmtspidev_dma_info->io_raddr = dma_alloc_coherent(&spi->spi->dev, 
 					                    dma_size,
 					                    &spi->wmtspidev_dma_info->phys_raddr, 
@@ -500,7 +501,7 @@ static int wmt_spidev_dma_init(struct wmtspidev_data *spi)
 	spi->wmtspidev_dma_info->tx_config.ChunkSize     = SPI_DMA_CHUNK_SIZE;
 	spi->wmtspidev_dma_info->tx_config.DefaultCCR    = SPI_TX_DMA_CFG;
 	spi->wmtspidev_dma_info->tx_config.DeviceReqType = SPI1_DMA_TX_REQ;
-	spi->wmtspidev_dma_info->tx_config.MIF1addr      = SPI1_BASE_ADDR + SPI_TXFIFO;
+	spi->wmtspidev_dma_info->tx_config.MIF1addr      = 0xD8250000 + SPI_TXFIFO;
 	spi->wmtspidev_dma_info->io_waddr = dma_alloc_coherent(&spi->spi->dev, 
 					dma_size + 7,
 					&spi->wmtspidev_dma_info->phys_waddr,
@@ -671,10 +672,10 @@ spidev_sync_write(struct wmtspidev_data *spidev, size_t len)
 
 		
         if(transfering != spi_get_rx_cnt(spidev)){
-            dev_info(&spidev->spi->dev, "err transfering %x", spi_get_rx_cnt(spidev));
-            dev_info(&spidev->spi->dev, "write reg 0 %x", spi_get_reg32(spidev, 0));
-		    dev_info(&spidev->spi->dev, "write reg 4 %x", spi_get_reg32(spidev, 4));
-		    dev_info(&spidev->spi->dev, "write reg 8 %x", spi_get_reg32(spidev, 8));
+            //dev_info(&spidev->spi->dev, "err transfering %x", spi_get_rx_cnt(spidev));
+            //dev_info(&spidev->spi->dev, "write reg 0 %x", spi_get_reg32(spidev, 0));
+		    //dev_info(&spidev->spi->dev, "write reg 4 %x", spi_get_reg32(spidev, 4));
+		    //dev_info(&spidev->spi->dev, "write reg 8 %x", spi_get_reg32(spidev, 8));
             goto writedone;
         }
 	    for (; transfering > 0; transfering--)
@@ -705,6 +706,7 @@ spidev_sync_dma_write(struct wmtspidev_data *spidev, size_t len)
 	volatile int *ack = &spi_dma->rx_ack;
 
 	u32 ctrl;
+	u32 dfcr;
 	size_t transfering = 0;
 	int i;
 
@@ -720,18 +722,21 @@ spidev_sync_dma_write(struct wmtspidev_data *spidev, size_t len)
 	buf = spidev->devmem + spidev->memindex;
 
 	spi_message_init(&m);
+	//m.is_dma_mapped = 1;
 	spi_message_add_tail(&t, &m);
 
     /* spi dma transfer need cs inactive first*/
-	wmt_spidev_cs_inactive(spidev);
-
+	//wmt_spidev_cs_inactive(spidev);
+    spi_reset(spidev);
 	ctrl = spi_get_reg32(spidev, SPI_CR);
-	ctrl |= SPI_CR_DRC_MASK | SPI_CR_RFTS_MASK | SPI_CR_TFTS_MASK | SPI_CR_IE_MASK;
+	ctrl |= SPI_CR_DRC_MASK | SPI_CR_RFTS_MASK;
 	spi_set_reg32(spidev, SPI_CR, ctrl);  
+	dfcr = spi_get_reg32(spidev, SPI_DFCR) | BIT28;
+	spi_set_reg32(spidev, SPI_DFCR, dfcr);
 	/* reset spi fifo */
-	spi_reset(spidev);
+	//spi_reset(spidev);
 
-    spi_enable(spidev);
+    //spi_enable(spidev);
 
 	//dev_info(&spidev->spi->dev, ">>> wmt spidev request dma ");
 	if (wmt_request_dma(&spi_dma->rx_ch, "wmt_spidev_rx",
@@ -744,21 +749,22 @@ spidev_sync_dma_write(struct wmtspidev_data *spidev, size_t len)
 	wmt_start_dma(spi_dma->rx_ch, spi_dma->phys_raddr, 0x00, len);
 	event = &spi_dma->rx_event;
 	ack = &spi_dma->rx_ack;
+    //dev_info(&spidev->spi->dev, "MIF1 addr %x", spidev->wmtspidev_dma_info->rx_config.MIF1addr);
     
-    
+    spi_enable(spidev);    
     /* enable spi and active chipselect signal */
 	//msleep(2);
     //spi_enable(spidev);
 	/* waitting for transmit finish */
 	msleep(2);
-	wmt_spidev_cs_active(spidev);
+	//wmt_spidev_cs_active(spidev);
 	
     transfering = spidev_sync(spidev, &m);
 	if(transfering)
     {
         memcpy(buf, spi_dma->io_raddr, transfering);
-        for(i = 0; i < transfering; i++)
-            dev_info(&spidev->spi->dev, "rx %x", *(buf+i));
+        //for(i = 0; i < transfering; i++)
+        //    dev_info(&spidev->spi->dev, "transfered %x, rx %x", transfering, *(buf+i));
 		wmt_free_dma(spi_dma->rx_ch);
 		memset(spi_dma->io_raddr, 0x00, len);
 	}
@@ -798,7 +804,7 @@ spidev_sync_read(struct wmtspidev_data *spidev, size_t len)
 	{
 	  
 		spi_write_fifo(spidev, SPI_TXFIFO, *buf);
-		dev_info(&spidev->spi->dev, "tx %x", *buf);
+		//dev_info(&spidev->spi->dev, "tx %x", *buf);
 	    buf++;
 		spidev->memindex ++;
 	}
@@ -810,14 +816,14 @@ spidev_sync_read(struct wmtspidev_data *spidev, size_t len)
 
 	if (spi_tx_is_finish(spidev))
 	{
-    	dev_info(&spidev->spi->dev, "error, transferd %d", transfered);
+    	//dev_info(&spidev->spi->dev, "error, transferd %d", transfered);
     	spi_disable(spidev);
         spi_reset_fifo(spidev);
 		goto readdone;
 	}
-	dev_info(&spidev->spi->dev, "read reg 0 %x", spi_get_reg32(spidev, 0));
-    dev_info(&spidev->spi->dev, "read reg 4 %x", spi_get_reg32(spidev, 4));
-	dev_info(&spidev->spi->dev, "read reg 8 %x", spi_get_reg32(spidev, 8));
+	//dev_info(&spidev->spi->dev, "read reg 0 %x", spi_get_reg32(spidev, 0));
+    //dev_info(&spidev->spi->dev, "read reg 4 %x", spi_get_reg32(spidev, 4));
+	//dev_info(&spidev->spi->dev, "read reg 8 %x", spi_get_reg32(spidev, 8));
 	transfered = len;		
 
 readdone:    
@@ -839,6 +845,8 @@ spidev_sync_dma_read(struct wmtspidev_data *spidev, size_t len)
 	wait_queue_head_t *event = &spi_dma->tx_event;
 	volatile int *ack = &spi_dma->tx_ack;
 	u32 ctrl;
+	u32 dfcr;
+	size_t i;
 
 	struct spi_transfer	t = {
 			.rx_buf		= spidev->buffer + spidev->memindex,
@@ -854,13 +862,14 @@ spidev_sync_dma_read(struct wmtspidev_data *spidev, size_t len)
 	spi_message_add_tail(&t, &m);
 	
     /* spi dma transfer need cs inactive first*/
-	wmt_spidev_cs_inactive(spidev);
+	//wmt_spidev_cs_inactive(spidev);
 
-	ctrl = spi_get_reg32(spidev, SPI_CR);
-	ctrl |= SPI_CR_DRC_MASK | SPI_CR_RFTS_MASK | SPI_CR_TFTS_MASK;
-	spi_set_reg32(spidev, SPI_CR, ctrl);  
-	/* reset spi fifo */
 	spi_reset(spidev);
+	ctrl = spi_get_reg32(spidev, SPI_CR);
+	ctrl |= SPI_CR_DRC_MASK | SPI_CR_TFTS_MASK;
+	spi_set_reg32(spidev, SPI_CR, ctrl);  
+	dfcr = spi_get_reg32(spidev, SPI_DFCR) | BIT28;
+	spi_set_reg32(spidev, SPI_DFCR, dfcr);
 
 	
 	/* tx dma buffer prepare */
@@ -881,14 +890,13 @@ spidev_sync_dma_read(struct wmtspidev_data *spidev, size_t len)
 	spi_enable(spidev);
 	/* waitting for transmit finish */
 	msleep(2);
-	wmt_spidev_cs_active(spidev);
+	//wmt_spidev_cs_active(spidev);
 	/* waitting transfer finish */
+    transfering = spidev_sync(spidev, &m);
 	if (!wait_event_interruptible_timeout(*event, *ack, 100)) {
-		dev_err(&spidev->spi->dev, "SPI DMA transfer failed\n");
+		dev_err(&spidev->spi->dev, "SPIDEV DMA transfer failed\n");
 		goto readdone;
 	};
-    
-    transfering = spidev_sync(spidev, &m);
 	
     wmt_free_dma(spi_dma->tx_ch);
 	memset(spi_dma->io_waddr, 0x00, len + 7);  
@@ -937,7 +945,7 @@ spidev_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
 	    {
 	        status += spidev_sync_read(spidev, SPI_FIFO_SIZE);
 	        count -= SPI_FIFO_SIZE;
-	        dev_info(&spidev->spi->dev, "status= :%d", status);
+	        //dev_info(&spidev->spi->dev, "status= :%d", status);
 	    }
 	    if(count)
 	    {
@@ -1477,10 +1485,10 @@ static int __devinit spidev_probe(struct spi_device *spi)
 		goto release_dma;
 	}
     wmt_spi1_gpio_set();
-    dev_info(&spi->dev, "%x %x %x", spi_get_reg32(spidev, 0), spi_get_reg32(spidev, 4), spi_get_reg32(spidev, 8));
+    //dev_info(&spi->dev, "%x %x %x", spi_get_reg32(spidev, 0), spi_get_reg32(spidev, 4), spi_get_reg32(spidev, 8));
     wmt_spi1_setup(spidev);
     spi_enable(spidev);
-    dev_info(&spi->dev, "%x %x %x", spi_get_reg32(spidev, 0), spi_get_reg32(spidev, 4), spi_get_reg32(spidev, 8));
+    //dev_info(&spi->dev, "%x %x %x", spi_get_reg32(spidev, 0), spi_get_reg32(spidev, 4), spi_get_reg32(spidev, 8));
     return status;
     
 release_dma:
